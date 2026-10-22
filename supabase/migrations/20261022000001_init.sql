@@ -217,6 +217,18 @@ create table public.notification_actions (
   primary key (queue_id, action)
 );
 
+-- Lease for the scheduler tick so overlapping cron runs don't do duplicate work.
+-- (A table lease rather than an advisory lock, because Supabase's transaction pooler
+-- does not keep session-level locks.) Not user data: no RLS policies, no client access.
+create table public.job_leases (
+  name text primary key,
+  holder text,
+  expires_at timestamptz not null default '-infinity'
+);
+alter table public.job_leases enable row level security;
+revoke all on public.job_leases from anon, authenticated;
+insert into public.job_leases (name) values ('tick');
+
 -- ---------------------------------------------------------------- row-level security
 do $$
 declare t text;

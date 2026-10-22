@@ -13,7 +13,8 @@
     "test:integration": "vitest run tests/integration",
     "db:migrate": "node scripts/migrate.mjs",
     "vapid": "web-push generate-vapid-keys --json",
-    "icons": "python3 scripts/make_icons.py"
+    "icons": "python3 scripts/make_icons.py",
+    "test:e2e": "PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS=1 node tests/e2e/offline-smoke.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",

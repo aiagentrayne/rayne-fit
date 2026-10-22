@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+/* Rayne Fit brand tokens (see docs/brand). */
+@theme {
+  --color-lime: #d9ff00;
+  --color-orange: #ff6a00;
+  --color-charcoal: #1a1a1a;
+  --color-ink: #121212;
+  --color-panel: #242424;
+  --color-panel-2: #2e2e2e;
+  --color-concrete: #5a5a5a;
+  --color-hardhat: #ffc300;
+  /* Status colours: YES = safety lime, NO = signal red. Both carry black text (>= 7:1 contrast)
+     and always appear with an icon + word, so colour is never the only signal. */
+  --color-yes: #d9ff00;
+  --color-no: #ff5c5c;
+  --color-muted: #b3b3b3;
+  --font-display: var(--font-archivo-black), "Arial Black", system-ui, sans-serif;
+  --font-sans: var(--font-inter), system-ui, -apple-system, sans-serif;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: var(--color-charcoal);
+  color: #fff;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  font-family: var(--font-sans);
+  padding-bottom: env(safe-area-inset-bottom);
+  overscroll-behavior-y: none;
+}
+
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: 0.01em;
+}
+
+.tracking-fit {
+  letter-spacing: 0.45em;
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-hardhat);
+  outline-offset: 2px;
+}
+
+.hazard {
+  background-image: repeating-linear-gradient(135deg, var(--color-lime) 0 10px, transparent 10px 20px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
