@@ -25,39 +25,65 @@ def font(size):
     raise SystemExit("No heavy font found; edit FONT_CANDIDATES")
 
 
-def hardhat(d, cx, top, w):
-    """Draws a hardhat of width w whose dome top is at y=top."""
-    h = w * 0.62
-    dome = [cx - w * 0.40, top, cx + w * 0.40, top + h * 1.5]
-    d.pieslice(dome, 180, 360, fill=YELLOW)
-    brim_y = top + h * 0.75
-    d.rounded_rectangle([cx - w * 0.5, brim_y - w * 0.04, cx + w * 0.5, brim_y + w * 0.09], radius=w * 0.05, fill=YELLOW)
-    ridge = max(2, int(w * 0.035))
-    for dx in (-0.12, 0.0, 0.12):
-        x = cx + dx * w
-        d.line([x, top + h * 0.10, x, brim_y - w * 0.05], fill=YELLOW_DARK, width=ridge)
+def _bezier(p0, p1, p2, p3, n=24):
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        a, b, c, d = (1 - t) ** 3, 3 * (1 - t) ** 2 * t, 3 * (1 - t) * t ** 2, t ** 3
+        pts.append((a * p0[0] + b * p1[0] + c * p2[0] + d * p3[0], a * p0[1] + b * p1[1] + c * p2[1] + d * p3[1]))
+    return pts
+
+
+def hardhat(d, cx, bottom, w):
+    """Draws the hardhat (same shape as the web Wordmark's 68x44 SVG) with its brim
+    resting on y=bottom, centred on cx, w wide."""
+    u = w / 68
+    x0, y0 = cx - w / 2, bottom - 44 * u
+    P = lambda x, y: (x0 + x * u, y0 + y * u)
+    dome = _bezier(P(8, 37), P(8, 16), P(20, 3), P(34, 3)) + _bezier(P(34, 3), P(48, 3), P(60, 16), P(60, 37))[1:]
+    d.polygon(dome, fill=YELLOW)
+    d.rounded_rectangle([*P(1, 34), *P(67, 44)], radius=3 * u, fill=YELLOW)
+    shade = tuple(round(0.45 * a + 0.55 * b) for a, b in zip(YELLOW, YELLOW_DARK))
+    d.rounded_rectangle([*P(1, 34), *P(67, 36.5)], radius=1.25 * u, fill=shade)
+    ridge = max(1, round(3 * u))
+    for x, top in ((25, 9), (34, 6), (43, 9)):
+        d.line([P(x, top), P(x, 29)], fill=YELLOW_DARK, width=ridge)
+        for y in (top, 29):
+            cxp, cyp = P(x, y)
+            d.ellipse([cxp - ridge / 2, cyp - ridge / 2, cxp + ridge / 2, cyp + ridge / 2], fill=YELLOW_DARK)
+
+
+SS = 4  # draw at 4x and downsample for smooth edges
 
 
 def mark(size, bg=CHARCOAL, fg=WHITE, padding=0.0, rounded=True):
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    big = size * SS
+    img = Image.new("RGBA", (big, big), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     if rounded:
-        d.rounded_rectangle([0, 0, size - 1, size - 1], radius=size * 0.22, fill=bg)
+        d.rounded_rectangle([0, 0, big - 1, big - 1], radius=big * 0.22, fill=bg)
     else:
-        d.rectangle([0, 0, size, size], fill=bg)
-    s = size * (1 - 2 * padding)
-    ox = size * padding
-    cx = size / 2
+        d.rectangle([0, 0, big, big], fill=bg)
+    s = big * (1 - 2 * padding)
+    ox = big * padding
+    cx = big / 2
     f = font(int(s * 0.56))
     bbox = d.textbbox((0, 0), "R", font=f)
     rw, rh = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    r_top = ox + s * 0.27
-    d.text((cx - rw / 2 - bbox[0], r_top - bbox[1]), "R", font=f, fill=fg)
-    hardhat(d, cx + s * 0.02, ox + s * 0.10, s * 0.34)
+    # The hat rests on the R (as in the brand guide's social icon): about 75% of the
+    # R's width, centred on it, with the brim slightly overlapping its top edge.
+    hat_w = rw * 0.75
+    hat_h = hat_w * 44 / 68
+    overlap = s * 0.008
     ff = font(int(s * 0.13))
     fb = d.textbbox((0, 0), "FIT", font=ff)
-    fw = fb[2] - fb[0]
-    fit_y = r_top + rh + s * 0.07
+    fit_gap = s * 0.07
+    group_h = hat_h - overlap + rh + fit_gap + (fb[3] - fb[1])
+    hat_top = ox + (s - group_h) / 2
+    r_top = hat_top + hat_h - overlap
+    d.text((cx - rw / 2 - bbox[0], r_top - bbox[1]), "R", font=f, fill=fg)
+    hardhat(d, cx, r_top + overlap, hat_w)
+    fit_y = r_top + rh + fit_gap
     spacing = s * 0.035
     letters = "FIT"
     total = sum(d.textbbox((0, 0), c, font=ff)[2] - d.textbbox((0, 0), c, font=ff)[0] for c in letters) + spacing * 2
@@ -71,8 +97,7 @@ def mark(size, bg=CHARCOAL, fg=WHITE, padding=0.0, rounded=True):
     gap = s * 0.04
     d.line([ox + s * 0.12, line_y, cx - total / 2 - gap, line_y], fill=LIME, width=lw)
     d.line([cx + total / 2 + gap, line_y, ox + s * 0.88, line_y], fill=LIME, width=lw)
-    _ = fw
-    return img
+    return img.resize((size, size), Image.LANCZOS)
 
 
 def badge(size):
