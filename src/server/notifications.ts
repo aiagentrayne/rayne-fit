@@ -6,8 +6,11 @@ import { writeResponse } from "./responses";
 import { makeActionToken, verifyActionToken } from "./tokens";
 import type { PushSender } from "./push";
 import { classifyStatus } from "./push";
+import { planCoach } from "./coach/plan";
+import { ensureNugget } from "./coach/nuggets";
 import {
   decideSend,
+  key as notificationKey,
   kindsCancelledBy,
   messages,
   planDay,
@@ -16,13 +19,16 @@ import {
   type NotificationKind,
   type PlannedNotification,
 } from "@/lib/core/reminders";
-import { isoWeekday, addDays, addMinutes, monthRange, weekRange, type LocalDate } from "@/lib/core/time";
+import { isoWeekday, addDays, addMinutes, monthRange, weekRange, zonedInstant, type LocalDate } from "@/lib/core/time";
 import { periodGrade } from "@/lib/core/scoring";
 import { formatPct } from "@/lib/core/grading";
 import { perfectStreaks } from "@/lib/core/analytics";
 import type { ResponseValue } from "@/lib/core/scoring";
 
-const PLANNED_KINDS: NotificationKind[] = ["reminder", "nudge", "deadline", "evening", "weekly_summary", "monthly_summary"];
+const PLANNED_KINDS: NotificationKind[] = [
+  "reminder", "nudge", "deadline", "evening", "weekly_summary", "monthly_summary",
+  "nugget", "checkin_morning", "interview_due", "interview_overdue",
+];
 export const MAX_SEND_ATTEMPTS = 4;
 const STALE_CLAIM_MINUTES = 10;
 
@@ -33,8 +39,8 @@ async function insertPlanned(t: Sql, userId: string, plan: PlannedNotification[]
     // New rows are inserted; a row cancelled earlier (e.g. the answer was cleared, or the
     // item re-enabled) is revived if it is still upcoming. Sent rows are never touched.
     await t`
-      insert into notification_queue (user_id, item_id, local_date, kind, scheduled_for, dedupe_key, title, body)
-      values (${userId}, ${p.itemId}, ${p.localDate}, ${p.kind}, ${p.scheduledFor}, ${p.dedupeKey}, ${p.title}, ${p.body})
+      insert into notification_queue (user_id, item_id, local_date, kind, scheduled_for, dedupe_key, title, body, session_id)
+      values (${userId}, ${p.itemId}, ${p.localDate}, ${p.kind}, ${p.scheduledFor}, ${p.dedupeKey}, ${p.title}, ${p.body}, ${p.sessionId ?? null})
       on conflict (dedupe_key) do update set status = 'pending', status_reason = null, title = excluded.title, body = excluded.body, updated_at = now()
         where notification_queue.status = 'cancelled' and notification_queue.scheduled_for > ${now}`;
   }
@@ -62,8 +68,21 @@ export async function planForUser(sql: Sql, userId: string, now: Date): Promise<
         return { itemId: di.itemId, name: di.name, dueTime: di.dueTime, rules: rulesById.get(di.itemId)!, followUpsOnly: di.response === "no" };
       });
     plan = planDay(userId, date, plannable, settings);
+    // The evening reminder also covers the evening check-in (mood and stress), so it is
+    // planned even when every item is answered or nothing is scheduled.
+    if (settings.eveningReminderEnabled && settings.checkinRemindersEnabled && !plan.some((p) => p.kind === "evening")) {
+      const at = zonedInstant(date, settings.eveningReminderTime, settings.timezone);
+      if (at.getTime() < day.cutoffAt.getTime()) {
+        plan.push({ dedupeKey: notificationKey(userId, date, null, "evening", at), kind: "evening", itemId: null, localDate: date, scheduledFor: at, title: "Scorecard check-in", body: "" });
+      }
+    }
   }
   plan.push(...planSummaries(userId, date, settings, isoWeekday(date)));
+  try {
+    plan.push(...(await planCoach(sql, userId, settings, date, day.status === "open")));
+  } catch (e) {
+    console.error("[planCoach]", e);
+  }
   if (!settings.notificationsEnabled) plan = [];
 
   await tx(sql, async (t) => {
@@ -90,6 +109,7 @@ interface QueueRow {
   id: string;
   user_id: string;
   item_id: string | null;
+  session_id: string | null;
   local_date: string;
   kind: NotificationKind;
   scheduled_for: Date;
@@ -154,6 +174,8 @@ export async function dispatchDue(sql: Sql, sender: PushSender, now: Date, limit
     let unanswered: number | undefined;
     let body = n.body;
     let title = n.title;
+    let url: string | null = null;
+    let coachDone: boolean | undefined;
     if (n.item_id) {
       const [di] = await sql`select * from day_items where user_id = ${n.user_id} and local_date = ${n.local_date} and item_id = ${n.item_id}`;
       const [st] = await sql`select status from items where id = ${n.item_id}`;
@@ -166,8 +188,24 @@ export async function dispatchDue(sql: Sql, sender: PushSender, now: Date, limit
       if (di) title = di.name as string;
     } else if (n.kind === "evening") {
       const [c] = await sql`select count(*) filter (where response is null)::int as n from day_items where user_id = ${n.user_id} and local_date = ${n.local_date}`;
-      unanswered = c.n;
-      body = messages.evening(unanswered ?? 0);
+      const missing = s.checkinRemindersEnabled ? await missingEveningRatings(sql, n.user_id, n.local_date) : 0;
+      unanswered = c.n + missing;
+      body = eveningBody(c.n, missing);
+      if (missing > 0) url = "/checkin";
+    } else if (n.kind === "checkin_morning") {
+      const [e] = await sql`select 1 from checkins where user_id = ${n.user_id} and local_date = ${n.local_date} and metric = 'energy'`;
+      coachDone = Boolean(e);
+      url = "/checkin";
+    } else if (n.kind === "nugget") {
+      let nug = (await sql`select id, body from nuggets where user_id = ${n.user_id} and local_date = ${n.local_date}`)[0];
+      if (!nug) nug = (await ensureNugget(sql, n.user_id, now, { force: true, settings: s })).nugget as never;
+      if (nug) body = (nug as { body: string }).body;
+      coachDone = !s.rossEnabled || !s.nuggetEnabled;
+      url = "/?nugget=1";
+    } else if (n.kind === "interview_due" || n.kind === "interview_overdue") {
+      const [x] = n.session_id ? await sql`select status from coaching_sessions where id = ${n.session_id}` : [];
+      coachDone = !s.rossEnabled || !x || !["scheduled", "in_progress"].includes(x.status as string);
+      url = n.session_id ? `/coach/session/${n.session_id}` : "/coach";
     } else if (n.kind === "weekly_summary" || n.kind === "monthly_summary") {
       body = await summaryBody(sql, n.user_id, n.kind, n.local_date, s);
     }
@@ -185,6 +223,8 @@ export async function dispatchDue(sql: Sql, sender: PushSender, now: Date, limit
       response,
       reconsiderAfterNo: reconsider,
       unansweredCount: unanswered,
+      coachDone,
+      rossQuiet: { start: s.rossQuietStart, end: s.rossQuietEnd },
     });
     if (decision.action !== "send") {
       const status = decision.action === "cancel" ? "cancelled" : decision.action === "suppress" ? "suppressed" : "expired";
@@ -206,7 +246,7 @@ export async function dispatchDue(sql: Sql, sender: PushSender, now: Date, limit
       body,
       kind: n.kind,
       tag: n.item_id ? `${n.item_id}:${n.local_date}` : `${n.kind}:${n.local_date}`,
-      url: n.item_id ? `/?date=${n.local_date}&item=${n.item_id}` : n.kind.endsWith("summary") ? "/history" : "/",
+      url: url ?? (n.item_id ? `/?date=${n.local_date}&item=${n.item_id}` : n.kind.endsWith("summary") ? "/history" : "/"),
       token: makeActionToken(n.id),
       itemActions: Boolean(n.item_id),
     });
@@ -293,7 +333,7 @@ export async function sendTestNotification(sql: Sql, sender: PushSender, userId:
 export async function upcomingForDay(sql: Sql, userId: string, date: LocalDate, now: Date) {
   const rows = await sql`
     select id, item_id, kind, scheduled_for, title, body, status, status_reason from notification_queue
-    where user_id = ${userId} and local_date = ${date} and kind in ('reminder','nudge','deadline','snooze','evening')
+    where user_id = ${userId} and local_date = ${date} and kind in ('reminder','nudge','deadline','snooze','evening','checkin_morning','nugget','interview_due','interview_overdue')
       and (status in ('pending','sending') or (status in ('sent','failed','suppressed','expired') and scheduled_for >= ${addMinutes(now, -180)}))
     order by scheduled_for`;
   return rows.map((r) => ({
@@ -323,4 +363,16 @@ export async function planForAll(sql: Sql, now: Date) {
   const users = await sql`select user_id from user_settings`;
   for (const u of users) await planForUser(sql, u.user_id as string, now);
   return users.length;
+}
+
+async function missingEveningRatings(sql: Sql, userId: string, date: LocalDate): Promise<number> {
+  const [r] = await sql`select count(*)::int as n from checkins where user_id = ${userId} and local_date = ${date} and metric in ('mood', 'stress')`;
+  return 2 - (r.n as number);
+}
+
+function eveningBody(unanswered: number, missingRatings: number): string {
+  if (missingRatings === 0) return messages.evening(unanswered);
+  const ratings = "Rate your mood and stress for today";
+  if (unanswered === 0) return `${ratings} to complete your daily review.`;
+  return `You have ${unanswered} unanswered item${unanswered === 1 ? "" : "s"}. ${ratings} too.`;
 }

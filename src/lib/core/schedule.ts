@@ -1,6 +1,8 @@
 import { isoWeekday, type LocalDate, type LocalTime } from "./time";
 
 export type ScheduleType = "daily" | "weekdays" | "weekends" | "custom";
+/** daily = YES/NO on scheduled days (counts in the day score); weekly/monthly = a target count per period. */
+export type Cadence = "daily" | "weekly" | "monthly";
 
 /** An immutable version of an item definition. Edits create a new version. */
 export interface ItemVersion {
@@ -19,6 +21,10 @@ export interface ItemVersion {
   /** False once the item is deactivated, archived, or deleted. */
   isActive: boolean;
   createdAt: Date;
+  cadence: Cadence;
+  /** Completions wanted per week or month (weekly/monthly cadence only). */
+  targetCount: number | null;
+  milestoneId: string | null;
 }
 
 export function scheduleDays(scheduleType: ScheduleType, daysOfWeek: number[]): number[] {
@@ -35,8 +41,10 @@ export function scheduleDays(scheduleType: ScheduleType, daysOfWeek: number[]): 
 }
 
 /** True when the version is active, effective on `date`, and its recurrence includes that weekday. */
-export function isScheduledOn(v: Pick<ItemVersion, "isActive" | "startDate" | "endDate" | "scheduleType" | "daysOfWeek">, date: LocalDate): boolean {
+export function isScheduledOn(v: Pick<ItemVersion, "isActive" | "startDate" | "endDate" | "scheduleType" | "daysOfWeek"> & { cadence?: Cadence }, date: LocalDate): boolean {
   if (!v.isActive) return false;
+  // Weekly and monthly measurables are graded per period and never appear in a day's score.
+  if (v.cadence && v.cadence !== "daily") return false;
   if (date < v.startDate) return false;
   if (v.endDate && date > v.endDate) return false;
   return scheduleDays(v.scheduleType, v.daysOfWeek).includes(isoWeekday(date));
@@ -73,4 +81,10 @@ export function describeSchedule(scheduleType: ScheduleType, daysOfWeek: number[
     case "custom":
       return scheduleDays("custom", daysOfWeek).map((d) => names[d]).join(", ") || "No days";
   }
+}
+
+export function describeCadence(cadence: Cadence, targetCount: number | null, scheduleType: ScheduleType, daysOfWeek: number[]): string {
+  if (cadence === "weekly") return `${targetCount ?? 1}× per week`;
+  if (cadence === "monthly") return `${targetCount ?? 1}× per month`;
+  return describeSchedule(scheduleType, daysOfWeek);
 }

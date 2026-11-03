@@ -1,10 +1,10 @@
 /* Rayne Fit service worker: app-shell caching, offline check-in sync, Web Push. */
-const VERSION = "rf-v1";
+const VERSION = "rf-v2";
 const SHELL_CACHE = `${VERSION}-shell`;
 const STATIC_CACHE = `${VERSION}-static`;
 const API_CACHE = `${VERSION}-api`;
-const SHELL = ["/", "/history", "/items", "/settings", "/login", "/install", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/badge-96.png"];
-const CACHEABLE_API = ["/api/dashboard", "/api/history", "/api/items", "/api/settings"];
+const SHELL = ["/", "/history", "/items", "/settings", "/login", "/install", "/coach", "/progress", "/checkin", "/privacy", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/badge-96.png"];
+const CACHEABLE_API = ["/api/dashboard", "/api/history", "/api/items", "/api/settings", "/api/progress", "/api/coach"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

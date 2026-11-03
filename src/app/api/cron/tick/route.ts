@@ -4,6 +4,7 @@ import { json, open } from "@/server/http";
 import { finalizeDueForAll } from "@/server/days";
 import { dispatchDue, planForAll } from "@/server/notifications";
 import { defaultSender } from "@/server/push";
+import { coachTick } from "@/server/coach/jobs";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -18,7 +19,8 @@ function authorized(req: Request): boolean {
 
 /**
  * The scheduler heartbeat. Call every minute (Supabase pg_cron + pg_net, or any cron).
- * 1) finalize days whose cutoff passed, 2) plan today's reminders, 3) deliver due pushes.
+ * 1) finalize days whose cutoff passed, 2) schedule ROSS interviews and prepare nuggets,
+ * 3) plan today's reminders, 4) deliver due pushes.
  * Every step is idempotent, and a lease row prevents overlapping runs.
  */
 async function tick(req: Request) {
@@ -31,9 +33,10 @@ async function tick(req: Request) {
   if (!lease.length) return json({ skipped: "another tick is running" });
   try {
     const finalized = await finalizeDueForAll(sql, now);
+    const coach = await coachTick(sql, now).catch((e) => (console.error("[coachTick]", e), null));
     const users = await planForAll(sql, now);
     const dispatch = await dispatchDue(sql, defaultSender(), now);
-    return json({ at: now.toISOString(), finalized, users, dispatch });
+    return json({ at: now.toISOString(), finalized, coach, users, dispatch });
   } finally {
     await sql`update job_leases set expires_at = '-infinity' where name = 'tick' and holder = ${holder}`;
   }

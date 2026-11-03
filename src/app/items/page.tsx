@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "@/client/api";
 import { fmtTime } from "@/client/format";
 import type { Item } from "@/client/types";
-import { describeSchedule } from "@/lib/core/schedule";
+import { describeCadence } from "@/lib/core/schedule";
 
 export default function ItemsPage() {
   const [items, setItems] = useState<Item[] | null>(null);
@@ -55,7 +55,7 @@ export default function ItemsPage() {
           + Add
         </Link>
       </header>
-      <p className="text-sm text-muted">Each scheduled item is YES or NO for the day. Order here is the order on Today.</p>
+      <p className="text-sm text-muted">These are your measurables. Daily ones are YES or NO on their scheduled days; weekly and monthly ones are a target count for the period. Order here is the order on Today.</p>
       {error && <p role="alert" className="text-sm text-no">{error}</p>}
       {items === null ? (
         <p className="text-muted">Loading…</p>
@@ -81,12 +81,14 @@ export default function ItemsPage() {
                   <Link href={`/items/${item.id}`} className="block">
                     <p className="truncate text-lg font-bold">{item.current.name}</p>
                     <p className="text-xs text-muted">
-                      {describeSchedule(item.current.scheduleType, item.current.daysOfWeek)}
+                      {describeCadence(item.current.cadence, item.current.targetCount, item.current.scheduleType, item.current.daysOfWeek)}
                       {item.current.dueTime && ` · due ${fmtTime(item.current.dueTime)}`}
                       {item.current.category && ` · ${item.current.category}`}
                     </p>
                     <p className="mt-1 text-xs">
-                      {item.rules.enabled && (item.rules.reminderTimes.length || item.rules.nudgeOffsets.length || item.rules.deadlineWarningMinutes) ? (
+                      {item.current.cadence !== "daily" ? (
+                        <span className="text-muted">Logged on Today · graded per {item.current.cadence === "weekly" ? "week" : "month"}</span>
+                      ) : item.rules.enabled && (item.rules.reminderTimes.length || item.rules.nudgeOffsets.length || item.rules.deadlineWarningMinutes) ? (
                         <span className="text-lime">
                           ⏰ {item.rules.reminderTimes.map(fmtTime).join(", ") || "Due-time reminders"}
                           {item.rules.nudgeOffsets.length > 0 && ` · ${item.rules.nudgeOffsets.length} nudge${item.rules.nudgeOffsets.length > 1 ? "s" : ""}`}

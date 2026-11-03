@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/client/api";
 import type { Item } from "@/client/types";
 import { DEFAULT_ITEM_RULES, NUDGE_PRESETS, nudgeOffsetsEvery, type ItemNotificationRules } from "@/lib/core/reminders";
-import type { ScheduleType } from "@/lib/core/schedule";
+import type { Cadence, ScheduleType } from "@/lib/core/schedule";
 
 const DAYS = [
   [1, "Mon"],
@@ -44,6 +44,13 @@ export function ItemForm({ item }: { item?: Item }) {
   const [endDate, setEndDate] = useState(v?.endDate ?? "");
   const [dueTime, setDueTime] = useState(v?.dueTime ?? "");
   const [rules, setRules] = useState<ItemNotificationRules>(item?.rules ?? { ...DEFAULT_ITEM_RULES });
+  const [cadence, setCadence] = useState<Cadence>(v?.cadence ?? "daily");
+  const [targetCount, setTargetCount] = useState<number>(v?.targetCount ?? 3);
+  const [milestoneId, setMilestoneId] = useState<string>(v?.milestoneId ?? "");
+  const [milestones, setMilestones] = useState<{ id: string; title: string; status: string }[]>([]);
+  useEffect(() => {
+    api<{ milestones: { id: string; title: string; status: string }[] }>("/api/coach/milestones").then((r) => setMilestones(r.milestones), () => {});
+  }, []);
   const initialInterval = asInterval(rules.nudgeOffsets);
   const [nudgeMode, setNudgeMode] = useState<"none" | "interval" | "custom">(rules.nudgeOffsets.length === 0 ? "none" : initialInterval ? "interval" : "custom");
   const [every, setEvery] = useState(initialInterval?.every ?? 15);
@@ -71,11 +78,14 @@ export function ItemForm({ item }: { item?: Item }) {
       name,
       description: description || null,
       category: category || null,
-      scheduleType,
-      daysOfWeek: days,
+      scheduleType: cadence === "daily" ? scheduleType : "daily",
+      daysOfWeek: cadence === "daily" ? days : [],
       startDate,
       endDate: endDate || null,
-      dueTime: dueTime || null,
+      dueTime: cadence === "daily" ? dueTime || null : null,
+      cadence,
+      targetCount: cadence === "daily" ? null : targetCount,
+      milestoneId: milestoneId || null,
       rules: { ...rules, nudgeOffsets: nudgeOffsets(), customMessage: rules.customMessage || null },
     };
     try {
@@ -110,6 +120,21 @@ export function ItemForm({ item }: { item?: Item }) {
 
       <fieldset className="space-y-4 rounded-2xl bg-panel p-4">
         <legend className="font-display px-1 text-lg">Schedule</legend>
+        <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="How it's tracked">
+          {(["daily", "weekly", "monthly"] as const).map((c) => (
+            <button type="button" role="radio" aria-checked={cadence === c} key={c} onClick={() => setCadence(c)} className={`rounded-xl py-2 text-sm font-semibold ${cadence === c ? "bg-hardhat text-ink" : "border border-concrete"}`}>
+              {c === "daily" ? "On set days" : c === "weekly" ? "Per week" : "Per month"}
+            </button>
+          ))}
+        </div>
+        {cadence !== "daily" ? (
+          <div>
+            <label className={label} htmlFor="target">Times per {cadence === "weekly" ? "week" : "month"}</label>
+            <input id="target" type="number" min={1} max={cadence === "weekly" ? 7 : 31} className={input} value={targetCount} onChange={(e) => setTargetCount(Math.max(1, Math.min(cadence === "weekly" ? 7 : 31, Number(e.target.value) || 1)))} />
+            <p className="mt-1 text-xs text-muted">Log it on Today whenever you do it. It&apos;s graded for the {cadence === "weekly" ? "week" : "month"} as a whole and never changes your daily score.</p>
+          </div>
+        ) : (
+        <>
         <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Repeats">
           {(["daily", "weekdays", "weekends", "custom"] as const).map((t) => (
             <button
@@ -139,6 +164,8 @@ export function ItemForm({ item }: { item?: Item }) {
             ))}
           </div>
         )}
+        </>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className={label} htmlFor="start">Starts</label>
@@ -149,13 +176,25 @@ export function ItemForm({ item }: { item?: Item }) {
             <input id="end" type="date" className={input} value={endDate} min={startDate} onChange={(e) => setEndDate(e.target.value)} />
           </div>
         </div>
-        <div>
-          <label className={label} htmlFor="due">Due time <span className="font-normal text-muted">(optional)</span></label>
-          <input id="due" type="time" className={input} value={dueTime} onChange={(e) => setDueTime(e.target.value)} />
-        </div>
+        {cadence === "daily" && (
+          <div>
+            <label className={label} htmlFor="due">Due time <span className="font-normal text-muted">(optional)</span></label>
+            <input id="due" type="time" className={input} value={dueTime} onChange={(e) => setDueTime(e.target.value)} />
+          </div>
+        )}
+        {milestones.some((m) => m.status === "active" || m.id === milestoneId) && (
+          <div>
+            <label className={label} htmlFor="milestone">Supports milestone <span className="font-normal text-muted">(optional)</span></label>
+            <select id="milestone" className={input} value={milestoneId} onChange={(e) => setMilestoneId(e.target.value)}>
+              <option value="">None</option>
+              {milestones.filter((m) => m.status === "active" || m.id === milestoneId).map((m) => <option key={m.id} value={m.id}>{m.title}</option>)}
+            </select>
+          </div>
+        )}
         {item && <p className="text-xs text-muted">Changes apply from today. Past days keep the version they were scored with.</p>}
       </fieldset>
 
+      {cadence === "daily" && (
       <fieldset className="space-y-4 rounded-2xl bg-panel p-4">
         <legend className="font-display px-1 text-lg">Reminders &amp; nudges</legend>
         <Toggle id="rules-enabled" checked={rules.enabled} onChange={(b) => setRule("enabled", b)} label="Reminders for this item" />
@@ -268,6 +307,7 @@ export function ItemForm({ item }: { item?: Item }) {
           </>
         )}
       </fieldset>
+      )}
 
       {error && <p role="alert" className="rounded-xl border border-no p-3 text-sm text-no">{error}</p>}
       <div className="flex gap-3">

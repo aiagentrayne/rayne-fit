@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { ZodError, type ZodTypeAny, type z } from "zod";
 import { HttpError, requireUserId } from "./auth";
 import { NotFoundError } from "./items";
+import { AiUnavailableError } from "./llm";
 
 export function json(data: unknown, status = 200) {
   return NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
@@ -10,6 +11,13 @@ export function json(data: unknown, status = 200) {
 function errorResponse(e: unknown) {
   if (e instanceof HttpError) return json({ error: e.message }, e.status);
   if (e instanceof NotFoundError) return json({ error: e.message }, 404);
+  if (e instanceof AiUnavailableError) {
+    const msg =
+      e.reason === "not_configured" ? "ROSS isn't connected to OpenAI yet." :
+      e.reason === "budget_user" || e.reason === "budget_global" ? e.message :
+      "ROSS couldn't answer just now. Your progress is saved; try again in a moment.";
+    return json({ error: msg, reason: e.reason }, 503);
+  }
   if (e instanceof ZodError) return json({ error: e.issues[0]?.message ?? "Invalid input", issues: e.issues }, 400);
   console.error(e);
   return json({ error: "Something went wrong" }, 500);

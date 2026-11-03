@@ -2,6 +2,7 @@ import type { Sql } from "./db";
 import { getSettings } from "./settings";
 import { getToday, mapDay, mapDayItem } from "./days";
 import { upcomingForDay } from "./notifications";
+import { getDashboardCoach } from "./coach/hub";
 import { scoreDay, weekGrade, monthGrade, type DaySummary } from "@/lib/core/scoring";
 import { addDays, monthRange, weekRange } from "@/lib/core/time";
 import {
@@ -33,6 +34,8 @@ export async function getDashboard(sql: Sql, userId: string, now: Date) {
   // In-app reminders: anything that came due in the last 3 hours for a still-unanswered item.
   const due = upcoming.filter((u) => u.itemId && unanswered.has(u.itemId) && new Date(u.scheduledFor) <= now && u.status !== "cancelled");
   const [subs] = await sql`select count(*)::int as n from push_subscriptions where user_id = ${userId} and disabled_at is null`;
+  // Coaching extras never break the scorecard: on any error the dashboard simply omits them.
+  const coach = await getDashboardCoach(sql, userId, today, now).catch((e) => (console.error("[dashboard coach]", e), null));
 
   return {
     now: now.toISOString(),
@@ -54,6 +57,7 @@ export async function getDashboard(sql: Sql, userId: string, now: Date) {
     nextReminder: next,
     dueReminders: dedupeByItem(due),
     pushSubscriptions: subs.n as number,
+    coach,
   };
 }
 

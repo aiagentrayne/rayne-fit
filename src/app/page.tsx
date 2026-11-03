@@ -10,6 +10,8 @@ import { SyncPill, useShell } from "@/components/AppShell";
 import { PeriodCard } from "@/components/PeriodCard";
 import { ScoreRing } from "@/components/ScoreRing";
 import { Wordmark } from "@/components/Wordmark";
+import { NuggetCard } from "@/components/coach/NuggetCard";
+import { CoachPrompts, DailyReviewCard, PeriodMeasurables } from "@/components/coach/TodayCoach";
 import { scoreDay } from "@/lib/core/scoring";
 
 type Answer = "yes" | "no" | null;
@@ -21,6 +23,7 @@ export default function TodayPage() {
   const [stale, setStale] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [focusItem, setFocusItem] = useState<string | null>(null);
+  const [focusNugget, setFocusNugget] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -50,6 +53,7 @@ export default function TodayPage() {
     void cacheGet<Dashboard>("dashboard").then((c) => c && setData((cur) => cur ?? c));
     const p = new URLSearchParams(location.search);
     setFocusItem(p.get("item"));
+    setFocusNugget(p.get("nugget") === "1");
   }, []);
 
   useEffect(() => {
@@ -123,6 +127,9 @@ export default function TodayPage() {
         <PeriodCard title="This month" period={data.month} />
       </div>
 
+      {data.coach && <CoachPrompts coach={data.coach} tz={tz} />}
+      {data.coach?.nugget && <NuggetCard nugget={data.coach.nugget} highlight={focusNugget} />}
+
       <ReminderStatus data={data} />
 
       {lastSyncIssues.length > 0 && (
@@ -151,6 +158,10 @@ export default function TodayPage() {
           </section>
         ))
       )}
+
+      {data.coach && <PeriodMeasurables date={data.today.date} items={data.coach.periods} open={!stale} onChange={() => void load()} />}
+
+      {data.coach && <DailyReviewCard date={data.today.date} review={data.coach.review} open={!stale} onChange={() => void load()} />}
 
       <div className="flex justify-center gap-3 pt-2 text-sm">
         <Link href="/items/new" className="rounded-xl border border-concrete px-4 py-2 font-semibold">

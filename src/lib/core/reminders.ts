@@ -10,7 +10,14 @@ export type NotificationKind =
   | "evening"
   | "weekly_summary"
   | "monthly_summary"
-  | "test";
+  | "test"
+  | "nugget"
+  | "checkin_morning"
+  | "interview_due"
+  | "interview_overdue";
+
+/** ROSS coaching kinds (not tied to a single habit item). */
+export const COACH_KINDS: NotificationKind[] = ["nugget", "interview_due", "interview_overdue"];
 
 export const NUDGE_PRESETS = [5, 10, 15, 30, 60] as const;
 
@@ -72,6 +79,8 @@ export interface PlannedNotification {
   scheduledFor: Date;
   title: string;
   body: string;
+  /** For interview reminders: the coaching session they belong to. */
+  sessionId?: string | null;
 }
 
 /** Expand "every N minutes, up to M times" into explicit offsets. */
@@ -91,7 +100,7 @@ export const messages = {
   evening: (count: number) => `You have ${count} unanswered item${count === 1 ? "" : "s"} today.`,
 };
 
-function key(userId: string, date: LocalDate, itemId: string | null, kind: NotificationKind, at: Date): string {
+export function key(userId: string, date: LocalDate, itemId: string | null, kind: NotificationKind, at: Date): string {
   return `${userId}|${date}|${itemId ?? "-"}|${kind}|${at.toISOString()}`;
 }
 
@@ -171,8 +180,12 @@ export interface SendState {
   itemRulesEnabled?: boolean;
   response?: ResponseValue;
   reconsiderAfterNo?: boolean;
-  /** For evening reminders. */
+  /** For evening reminders: unanswered items plus missing evening check-ins. */
   unansweredCount?: number;
+  /** For check-in, nugget and interview reminders: true when the thing is already done. */
+  coachDone?: boolean;
+  /** ROSS quiet hours, applied to coaching kinds on top of the app-wide quiet hours. */
+  rossQuiet?: { start: LocalTime; end: LocalTime };
 }
 
 export type SendDecision =
@@ -196,7 +209,9 @@ export function inQuietHours(at: Date, s: Pick<SendState, "quietHoursEnabled" | 
 export function decideSend(kind: NotificationKind, scheduledFor: Date, s: SendState): SendDecision {
   if (kind === "test") return { action: "send" };
   const isSummary = kind === "weekly_summary" || kind === "monthly_summary";
-  if (!isSummary && s.dayFinal) return { action: "cancel", reason: "day_finalized" };
+  const isInterview = kind === "interview_due" || kind === "interview_overdue";
+  if (!isSummary && !isInterview && s.dayFinal) return { action: "cancel", reason: "day_finalized" };
+  if (s.coachDone) return { action: "cancel", reason: "already_done" };
   if (s.itemScheduled === false) return { action: "cancel", reason: "item_not_scheduled" };
   if (s.itemRulesEnabled === false) return { action: "cancel", reason: "item_notifications_off" };
   if (s.response === "yes") return { action: "cancel", reason: "already_yes" };
@@ -208,6 +223,10 @@ export function decideSend(kind: NotificationKind, scheduledFor: Date, s: SendSt
   if (!s.notificationsEnabled) return { action: "suppress", reason: "notifications_disabled" };
   // Quiet hours apply both to when it was due and to when it would actually arrive.
   if (inQuietHours(scheduledFor, s) || inQuietHours(s.now, s)) return { action: "suppress", reason: "quiet_hours" };
+  if (s.rossQuiet && COACH_KINDS.includes(kind)) {
+    const q = { quietHoursEnabled: true, quietStart: s.rossQuiet.start, quietEnd: s.rossQuiet.end, timezone: s.timezone };
+    if (inQuietHours(s.now, q)) return { action: "suppress", reason: "ross_quiet_hours" };
+  }
   if (s.now.getTime() - scheduledFor.getTime() > MAX_LATENESS_MINUTES * 60_000) return { action: "expire", reason: "too_late" };
   return { action: "send" };
 }

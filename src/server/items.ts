@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { tx, type Sql } from "./db";
-import type { ItemVersion, ScheduleType } from "@/lib/core/schedule";
+import type { Cadence, ItemVersion, ScheduleType } from "@/lib/core/schedule";
 import { DEFAULT_ITEM_RULES, type ItemNotificationRules } from "@/lib/core/reminders";
 import { isLocalDate, isLocalTime, type LocalDate } from "@/lib/core/time";
 
@@ -31,6 +31,9 @@ export function mapVersion(r: Row): ItemVersion {
     dueTime: (r.due_time as string) ?? null,
     isActive: r.is_active as boolean,
     createdAt: r.created_at as Date,
+    cadence: ((r.cadence as Cadence) ?? "daily") as Cadence,
+    targetCount: r.target_count == null ? null : Number(r.target_count),
+    milestoneId: (r.milestone_id as string) ?? null,
   };
 }
 
@@ -71,12 +74,17 @@ export const itemInputSchema = z
     startDate: z.string().refine(isLocalDate, "Invalid start date."),
     endDate: z.string().refine(isLocalDate, "Invalid end date.").nullable().optional(),
     dueTime: z.string().refine(isLocalTime, "Use HH:MM.").nullable().optional(),
+    cadence: z.enum(["daily", "weekly", "monthly"]).default("daily"),
+    targetCount: z.number().int().min(1).max(31).nullable().optional(),
+    milestoneId: z.string().uuid().nullable().optional(),
     rules: rulesSchema.optional(),
   })
+  .refine((v) => v.cadence === "daily" || (v.targetCount ?? 0) >= 1, { message: "Set how many times per period.", path: ["targetCount"] })
+  .refine((v) => v.cadence !== "weekly" || (v.targetCount ?? 0) <= 7, { message: "A weekly target can be at most 7.", path: ["targetCount"] })
   .refine((v) => !v.endDate || v.endDate >= v.startDate, { message: "End date must be on or after the start date.", path: ["endDate"] })
   .refine((v) => v.scheduleType !== "custom" || v.daysOfWeek.length > 0, { message: "Pick at least one day.", path: ["daysOfWeek"] });
 
-export type ItemInput = z.infer<typeof itemInputSchema>;
+export type ItemInput = z.input<typeof itemInputSchema>;
 
 export async function loadVersions(sql: Sql, userId: string): Promise<ItemVersion[]> {
   const rows = await sql`select * from item_versions where user_id = ${userId} order by item_id, version`;
@@ -108,12 +116,21 @@ export async function getItem(sql: Sql, userId: string, itemId: string): Promise
   return (await listItems(sql, userId, { includeDeleted: true })).find((i) => i.id === itemId) ?? null;
 }
 
-async function insertVersion(t: Sql, userId: string, itemId: string, version: number, input: ItemInput, isActive: boolean, now: Date) {
+async function insertVersion(t: Sql, userId: string, itemId: string, version: number, input: ItemInput, isActive: boolean, now: Date, changedByProposal: string | null = null) {
+  const cadence = input.cadence ?? "daily";
   await t`
-    insert into item_versions (item_id, user_id, version, name, description, category, schedule_type, days_of_week, start_date, end_date, due_time, is_active, created_at)
+    insert into item_versions (item_id, user_id, version, name, description, category, schedule_type, days_of_week, start_date, end_date, due_time, is_active, created_at,
+                               cadence, target_count, milestone_id, changed_by_proposal)
     values (${itemId}, ${userId}, ${version}, ${input.name}, ${input.description ?? null}, ${input.category ?? null}, ${input.scheduleType},
-            ${input.scheduleType === "custom" ? [...new Set(input.daysOfWeek)].sort() : []}::smallint[], ${input.startDate}, ${input.endDate ?? null},
-            ${input.dueTime ?? null}, ${isActive}, ${now})`;
+            ${input.scheduleType === "custom" ? [...new Set(input.daysOfWeek ?? [])].sort() : []}::smallint[], ${input.startDate}, ${input.endDate ?? null},
+            ${input.dueTime ?? null}, ${isActive}, ${now}, ${cadence}, ${cadence === "daily" ? null : (input.targetCount ?? 1)},
+            ${input.milestoneId ?? null}, ${changedByProposal})`;
+}
+
+async function assertMilestone(t: Sql, userId: string, milestoneId: string | null | undefined) {
+  if (!milestoneId) return;
+  const [m] = await t`select id from milestones where id = ${milestoneId} and user_id = ${userId}`;
+  if (!m) throw new NotFoundError("Milestone not found.");
 }
 
 async function upsertRules(t: Sql, userId: string, itemId: string, rules: ItemNotificationRules) {
@@ -129,19 +146,24 @@ async function upsertRules(t: Sql, userId: string, itemId: string, rules: ItemNo
       reconsider_after_no = excluded.reconsider_after_no, custom_message = excluded.custom_message, updated_at = now()`;
 }
 
-export async function createItem(sql: Sql, userId: string, input: ItemInput, now = new Date()): Promise<string> {
+export async function createItem(sql: Sql, userId: string, input: ItemInput, now = new Date(), changedByProposal: string | null = null): Promise<string> {
   return tx(sql, async (t) => {
+    await assertMilestone(t, userId, input.milestoneId);
     const [{ next }] = await t`select coalesce(max(position), -1) + 1 as next from items where user_id = ${userId}`;
     const [{ id }] = await t`insert into items (user_id, position) values (${userId}, ${next}) returning id`;
-    await insertVersion(t, userId, id, 1, input, true, now);
+    await insertVersion(t, userId, id, 1, input, true, now, changedByProposal);
     await upsertRules(t, userId, id, input.rules ?? DEFAULT_ITEM_RULES);
     return id as string;
   });
 }
 
 function definitionChanged(v: ItemVersion, input: ItemInput): boolean {
-  const days = input.scheduleType === "custom" ? [...new Set(input.daysOfWeek)].sort().join(",") : "";
+  const days = input.scheduleType === "custom" ? [...new Set(input.daysOfWeek ?? [])].sort().join(",") : "";
+  const cadence = input.cadence ?? "daily";
   return (
+    v.cadence !== cadence ||
+    (cadence !== "daily" && v.targetCount !== (input.targetCount ?? 1)) ||
+    (v.milestoneId ?? null) !== (input.milestoneId ?? null) ||
     v.name !== input.name ||
     (v.description ?? null) !== (input.description ?? null) ||
     (v.category ?? null) !== (input.category ?? null) ||
@@ -154,19 +176,20 @@ function definitionChanged(v: ItemVersion, input: ItemInput): boolean {
 }
 
 /** Edits never mutate an existing version; they append a new one. */
-export async function updateItem(sql: Sql, userId: string, itemId: string, input: ItemInput, now = new Date()): Promise<void> {
+export async function updateItem(sql: Sql, userId: string, itemId: string, input: ItemInput, now = new Date(), changedByProposal: string | null = null): Promise<void> {
   await tx(sql, async (t) => {
     const item = await getItem(t, userId, itemId);
     if (!item || item.status === "deleted") throw new NotFoundError("Item not found.");
+    await assertMilestone(t, userId, input.milestoneId);
     if (definitionChanged(item.current, input)) {
-      await insertVersion(t, userId, itemId, item.current.version + 1, input, item.current.isActive, now);
+      await insertVersion(t, userId, itemId, item.current.version + 1, input, item.current.isActive, now, changedByProposal);
     }
     if (input.rules) await upsertRules(t, userId, itemId, input.rules);
     await t`update items set updated_at = now() where id = ${itemId}`;
   });
 }
 
-export async function setItemStatus(sql: Sql, userId: string, itemId: string, status: ItemStatus, now = new Date()): Promise<void> {
+export async function setItemStatus(sql: Sql, userId: string, itemId: string, status: ItemStatus, now = new Date(), changedByProposal: string | null = null): Promise<void> {
   await tx(sql, async (t) => {
     const item = await getItem(t, userId, itemId);
     if (!item || item.status === "deleted") throw new NotFoundError("Item not found.");
@@ -174,7 +197,7 @@ export async function setItemStatus(sql: Sql, userId: string, itemId: string, st
     const v = item.current;
     const active = status === "active";
     if (v.isActive !== active) {
-      await insertVersion(t, userId, itemId, v.version + 1, { ...v, description: v.description, category: v.category, endDate: v.endDate, dueTime: v.dueTime }, active, now);
+      await insertVersion(t, userId, itemId, v.version + 1, { ...v, description: v.description, category: v.category, endDate: v.endDate, dueTime: v.dueTime }, active, now, changedByProposal);
     }
     await t`update items set status = ${status}, updated_at = now() where id = ${itemId} and user_id = ${userId}`;
   });

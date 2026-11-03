@@ -15,7 +15,8 @@ export async function makeUser(startDate = "2026-10-19", patch: SettingsPatch = 
   const id = randomUUID();
   await sql`insert into auth.users (id, email) values (${id}, ${id + "@test.local"})`;
   await getSettings(sql, id, { timezone: "America/New_York", now: new Date(`${startDate}T16:00:00Z`) });
-  if (Object.keys(patch).length) await updateSettings(sql, id, patch, new Date(`${startDate}T16:00:00Z`));
+  // Check-in reminders default to off here so older reminder tests stay focused; ROSS tests opt in.
+  await updateSettings(sql, id, { checkinRemindersEnabled: false, ...patch }, new Date(`${startDate}T16:00:00Z`));
   return id;
 }
 

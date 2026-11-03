@@ -20,4 +20,8 @@ export const KIND_LABEL: Record<string, string> = {
   deadline: "Deadline warning",
   snooze: "Snoozed reminder",
   evening: "Evening check-in",
+  checkin_morning: "Morning check-in",
+  nugget: "Daily nugget",
+  interview_due: "Interview reminder",
+  interview_overdue: "Interview reminder",
 };

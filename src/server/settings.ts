@@ -13,7 +13,27 @@ export interface DashboardPrefs {
 
 export const DEFAULT_DASHBOARD_PREFS: DashboardPrefs = { showCategories: true, showDescriptions: false, groupByCategory: false };
 
-export interface UserSettings extends GlobalNotificationSettings {
+export interface RossSettings {
+  rossEnabled: boolean;
+  rossConsentAt: string | null;
+  rossShareCheckins: boolean;
+  rossShareJournal: boolean;
+  nuggetEnabled: boolean;
+  nuggetWindowStart: LocalTime;
+  nuggetWindowEnd: LocalTime;
+  checkinRemindersEnabled: boolean;
+  morningCheckinTime: LocalTime;
+  morningFollowupTime: LocalTime;
+  weeklyInterviewDow: number;
+  weeklyInterviewTime: LocalTime;
+  monthlyInterviewEnabled: boolean;
+  quarterlyReviewEnabled: boolean;
+  rossMaxDailyNotifications: number;
+  rossQuietStart: LocalTime;
+  rossQuietEnd: LocalTime;
+}
+
+export interface UserSettings extends GlobalNotificationSettings, RossSettings {
   gradeThresholds: GradeThreshold[];
   dashboardPrefs: DashboardPrefs;
   scoringStartDate: LocalDate;
@@ -37,6 +57,23 @@ export function mapSettings(r: Row): UserSettings {
     monthlySummaryEnabled: r.monthly_summary_enabled as boolean,
     dashboardPrefs: { ...DEFAULT_DASHBOARD_PREFS, ...((r.dashboard_prefs as Partial<DashboardPrefs>) ?? {}) },
     scoringStartDate: r.scoring_start_date as LocalDate,
+    rossEnabled: Boolean(r.ross_enabled),
+    rossConsentAt: r.ross_consent_at ? new Date(r.ross_consent_at as string).toISOString() : null,
+    rossShareCheckins: r.ross_share_checkins !== false,
+    rossShareJournal: Boolean(r.ross_share_journal),
+    nuggetEnabled: r.nugget_enabled !== false,
+    nuggetWindowStart: (r.nugget_window_start as LocalTime) ?? "06:00",
+    nuggetWindowEnd: (r.nugget_window_end as LocalTime) ?? "09:00",
+    checkinRemindersEnabled: r.checkin_reminders_enabled !== false,
+    morningCheckinTime: (r.morning_checkin_time as LocalTime) ?? "07:15",
+    morningFollowupTime: (r.morning_followup_time as LocalTime) ?? "10:00",
+    weeklyInterviewDow: Number(r.weekly_interview_dow ?? 7),
+    weeklyInterviewTime: (r.weekly_interview_time as LocalTime) ?? "18:00",
+    monthlyInterviewEnabled: r.monthly_interview_enabled !== false,
+    quarterlyReviewEnabled: r.quarterly_review_enabled !== false,
+    rossMaxDailyNotifications: Number(r.ross_max_daily_notifications ?? 2),
+    rossQuietStart: (r.ross_quiet_start as LocalTime) ?? "22:00",
+    rossQuietEnd: (r.ross_quiet_end as LocalTime) ?? "06:00",
   };
 }
 
@@ -73,6 +110,21 @@ export const settingsPatchSchema = z
     weeklySummaryEnabled: z.boolean(),
     monthlySummaryEnabled: z.boolean(),
     dashboardPrefs: z.object({ showCategories: z.boolean(), showDescriptions: z.boolean(), groupByCategory: z.boolean() }).partial(),
+    rossShareCheckins: z.boolean(),
+    rossShareJournal: z.boolean(),
+    nuggetEnabled: z.boolean(),
+    nuggetWindowStart: time,
+    nuggetWindowEnd: time,
+    checkinRemindersEnabled: z.boolean(),
+    morningCheckinTime: time,
+    morningFollowupTime: time,
+    weeklyInterviewDow: z.number().int().min(1).max(7),
+    weeklyInterviewTime: time,
+    monthlyInterviewEnabled: z.boolean(),
+    quarterlyReviewEnabled: z.boolean(),
+    rossMaxDailyNotifications: z.number().int().min(1).max(4),
+    rossQuietStart: time,
+    rossQuietEnd: time,
   })
   .partial()
   .strict();
@@ -96,7 +148,14 @@ export async function updateSettings(sql: Sql, userId: string, patch: SettingsPa
       quiet_start = ${next.quietStart}, quiet_end = ${next.quietEnd},
       evening_reminder_enabled = ${next.eveningReminderEnabled}, evening_reminder_time = ${next.eveningReminderTime},
       weekly_summary_enabled = ${next.weeklySummaryEnabled}, monthly_summary_enabled = ${next.monthlySummaryEnabled},
-      dashboard_prefs = ${sql.json(next.dashboardPrefs as never)}, updated_at = now()
+      dashboard_prefs = ${sql.json(next.dashboardPrefs as never)},
+      ross_share_checkins = ${next.rossShareCheckins}, ross_share_journal = ${next.rossShareJournal},
+      nugget_enabled = ${next.nuggetEnabled}, nugget_window_start = ${next.nuggetWindowStart}, nugget_window_end = ${next.nuggetWindowEnd},
+      checkin_reminders_enabled = ${next.checkinRemindersEnabled}, morning_checkin_time = ${next.morningCheckinTime},
+      morning_followup_time = ${next.morningFollowupTime}, weekly_interview_dow = ${next.weeklyInterviewDow},
+      weekly_interview_time = ${next.weeklyInterviewTime}, monthly_interview_enabled = ${next.monthlyInterviewEnabled},
+      quarterly_review_enabled = ${next.quarterlyReviewEnabled}, ross_max_daily_notifications = ${next.rossMaxDailyNotifications},
+      ross_quiet_start = ${next.rossQuietStart}, ross_quiet_end = ${next.rossQuietEnd}, updated_at = now()
     where user_id = ${userId}`;
 
   if (patch.timezone !== undefined || patch.cutoffTime !== undefined) {
@@ -110,4 +169,17 @@ export async function updateSettings(sql: Sql, userId: string, patch: SettingsPa
     }
   }
   return next;
+}
+
+/** Turns ROSS on (recording consent) or off. Turning it off keeps data until the user deletes it. */
+export async function setRossEnabled(sql: Sql, userId: string, enabled: boolean, consent: { shareCheckins: boolean; shareJournal: boolean } | null, now = new Date()) {
+  await getSettings(sql, userId, { now });
+  if (enabled) {
+    await sql`update user_settings set ross_enabled = true, ross_consent_at = coalesce(ross_consent_at, ${now}),
+              ross_share_checkins = ${consent?.shareCheckins ?? true}, ross_share_journal = ${consent?.shareJournal ?? false}, updated_at = now()
+              where user_id = ${userId}`;
+  } else {
+    await sql`update user_settings set ross_enabled = false, updated_at = now() where user_id = ${userId}`;
+  }
+  return getSettings(sql, userId, { now });
 }

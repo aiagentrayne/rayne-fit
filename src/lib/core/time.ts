@@ -43,6 +43,13 @@ export function formatMinutes(total: number): LocalTime {
 export function zonedInstant(date: LocalDate, time: LocalTime, tz: string): Date {
   const dt = DateTime.fromISO(`${date}T${time}`, { zone: tz });
   if (!dt.isValid) throw new Error(`Invalid date/time/zone: ${date} ${time} ${tz}`);
+  // In a fall-back overlap the same wall time exists twice; pick the earlier instant
+  // explicitly instead of relying on the library's guess (overlaps are 30 or 60 minutes).
+  const wall = dt.toFormat("yyyy-MM-dd'T'HH:mm");
+  for (const minutes of [60, 30]) {
+    const earlier = dt.minus({ minutes });
+    if (earlier.toFormat("yyyy-MM-dd'T'HH:mm") === wall) return earlier.toJSDate();
+  }
   return dt.toJSDate();
 }
 
