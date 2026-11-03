@@ -75,6 +75,9 @@ const v = (over: Partial<ItemVersion>): ItemVersion => ({
   dueTime: null,
   isActive: true,
   createdAt: new Date("2026-01-01T00:00:00Z"),
+  cadence: "daily",
+  targetCount: null,
+  milestoneId: null,
   ...over,
 });
 

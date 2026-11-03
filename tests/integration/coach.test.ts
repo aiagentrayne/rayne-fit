@@ -135,13 +135,13 @@ describeDb("ROSS interviews and nuggets", () => {
     expect(sessions[0]).toMatchObject({ kind: "weekly", period_start: "2026-10-19", period_end: "2026-10-25", status: "scheduled" });
 
     await planForUser(sql, u, ny("2026-10-25", "12:00"));
-    let q = await queue(u);
+    const q = await queue(u);
     expect(q.map((r) => r.kind)).toEqual(["interview_due"]);
     expect((q[0].scheduled_for as Date).toISOString()).toBe(ny("2026-10-25", "18:00").toISOString());
 
     await planForUser(sql, u, ny("2026-10-26", "09:00"));
-    q = (await queue(u)).filter((r) => r.status === "pending" && (r.scheduled_for as Date) > ny("2026-10-26", "00:00"));
-    expect(q.map((r) => `${r.kind}:${r.title}`)).toEqual(["interview_overdue:Weekly interview: 1 day overdue"]);
+    const later = (await queue(u)).filter((r) => r.status === "pending" && (r.scheduled_for as Date) > ny("2026-10-26", "00:00"));
+    expect(later.map((r) => `${r.kind}:${r.title}`)).toEqual(["interview_overdue:Weekly interview: 1 day overdue"]);
 
     await finishSession(sql, u, sessions[0].id as string, [], ny("2026-10-26", "10:00"));
     expect((await queue(u)).filter((r) => r.status === "pending")).toHaveLength(0);
