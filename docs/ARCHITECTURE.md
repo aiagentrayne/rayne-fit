@@ -81,3 +81,15 @@ Web push can't ring like the Clock app, bypass Silent Mode/Focus, or guarantee s
 - A small iOS app (Swift, or React Native/Expo) would authenticate with the same Supabase project, fetch the planned rows for the next 24–48 hours, and schedule **local** notifications with `UNUserNotificationCenter` (and Time-Sensitive / Critical Alerts entitlement where Apple approves it), using the dedupe key as the notification identifier so updates replace rather than duplicate.
 - Answers from the native app post to the same `/api/responses` endpoint with mutation ids; cancellation is just removing pending local notifications by identifier when the server reports YES.
 - `push_subscriptions` would gain a `kind` column (`webpush` | `apns`) and `PushSender` an APNs implementation; nothing in scoring changes.
+
+## ROSS coaching (`supabase/migrations/20261103000001_ross.sql`, `src/server/coach/`)
+
+- **Off by default.** A user turns ROSS on from Coach after a consent screen; turning it off keeps data, "Delete all coaching data" removes it.
+- **OpenAI only through `src/server/llm.ts`.** Responses API with strict JSON schemas and `store: false`; per-user monthly and global daily token caps; every call logged to `ai_calls` (tokens, cost, latency, never text). Models come from `OPENAI_MODEL_COACH` (default `gpt-6.1-sol`), `OPENAI_MODEL_NUGGET` (`gpt-6.1-terra`) and `OPENAI_MODEL_TRANSCRIBE` (`gpt-transcribe`). Without `OPENAI_API_KEY` everything else works and nuggets use templates.
+- **ROSS can only propose.** Model output may contain `proposals`; they are validated when filed and again on approval (`src/server/proposals.ts`), and applied measurable changes record `changed_by_proposal` on the new item version.
+- **Facts come from the backend.** `coach/context.ts` computes rates, trends and observations; user-written text is wrapped as data (`asData`) and check-ins/journal are included only if the user shares them. Missing ratings are "not recorded".
+- **Check-ins** (`checkins`, `journal_entries`): energy, mood, stress on a 1 (hard) to 5 (favourable) scale; the daily review is complete only with all three; late entries up to 7 days keep their real time. Ratings never affect scores.
+- **Weekly/monthly measurables**: `item_versions.cadence` + `target_count`, logged in `measurable_logs`, graded per period, excluded from day scoring by `isScheduledOn`.
+- **Scheduling**: the tick creates weekly/monthly/quarterly `coaching_sessions`, prepares nuggets 90 minutes before their send time (a stable time inside the user's window), and the planner adds check-in reminders, the nugget push and one escalating interview reminder per day (due, +24 h, +48 h, +72 h, then daily) under a per-day cap and ROSS quiet hours. An open interview becomes `missed` once the next one is due.
+- **Safety**: crisis language (`detectCrisis`) in interviews, notes or journal pauses coaching and shows 988 / local emergency resources without calling the model; the model can also raise `safety_concern`.
+- **Retention**: transcripts deleted after 12 months (summaries kept), AI logs after 90 days.
