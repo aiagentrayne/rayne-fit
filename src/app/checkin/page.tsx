@@ -121,7 +121,7 @@ export default function CheckinPage() {
         </div>
         <button type="button" onClick={() => go(1)} disabled={isToday} className="h-10 w-10 rounded-lg border border-concrete disabled:opacity-30" aria-label="Next day">›</button>
       </div>
-      {!isToday && <p className="text-xs text-muted">Late entries are saved with the time you enter them.</p>}
+      {!isToday && <p className="text-xs text-muted">You can add or change ratings for the last 30 days. Changes are saved with the time you make them.</p>}
 
       {crisis && <CrisisCard />}
 

@@ -10,6 +10,10 @@ import { scoreColor } from "@/components/ScoreRing";
 import { useShell } from "@/components/AppShell";
 import { formatPct, gradeFor } from "@/lib/core/grading";
 import { addDays, isoWeekday, monthRange } from "@/lib/core/time";
+import Link from "next/link";
+import { CheckinScale } from "@/components/coach/CheckinScale";
+import type { ReviewStatus } from "@/client/types";
+import type { Metric } from "@/lib/core/coach";
 
 interface History {
   today: string;
@@ -248,6 +252,8 @@ function DayPanel({ date, onClose, onChanged }: { date: string; onClose: () => v
       </ul>
       {d?.day?.status === "open" && <p className="mt-2 text-xs text-muted">This day is still open. Change answers on the Today screen.</p>}
 
+      <DayCheckins date={date} />
+
       {editing && (
         <div className="mt-4 space-y-3 rounded-xl border border-hardhat p-3">
           <p className="text-sm font-semibold">Correct &ldquo;{editing.name}&rdquo; (currently {editing.response?.toUpperCase()})</p>
@@ -326,5 +332,54 @@ function Trend({ title, periods, label }: { title: string; periods: Period[]; la
         </details>
       </div>
     </section>
+  );
+}
+
+interface CheckinDayView {
+  date: string;
+  today: string;
+  earliest: string;
+  review: ReviewStatus;
+  journal: string;
+}
+
+/** Energy, mood and stress for a past day, editable for the last 30 days. */
+function DayCheckins({ date }: { date: string }) {
+  const [c, setC] = useState<CheckinDayView | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => {
+    setC(null);
+    api<CheckinDayView>(`/api/checkins?date=${date}`).then(setC, (e) => setError(e.message));
+  }, [date]);
+
+  async function pick(metric: Metric, rating: number) {
+    setError(null);
+    try {
+      setC(await api<CheckinDayView>("/api/checkins", { method: "POST", json: { date, metric, rating } }));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  if (!c) return error ? <p className="mt-3 text-xs text-muted">{error}</p> : null;
+  const editable = date >= c.earliest && date <= c.today;
+  return (
+    <div className="mt-4 space-y-3 border-t border-panel-2 pt-4">
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold">Check-in</h3>
+        <span className="text-xs" aria-live="polite">
+          {saved ? <span className="text-lime">Saved</span> : <span className={c.review.complete ? "text-lime" : "text-muted"}>{c.review.complete ? "Review complete" : `${3 - c.review.missing.length} of 3 recorded`}</span>}
+        </span>
+      </div>
+      {(["energy", "mood", "stress"] as Metric[]).map((m) => (
+        <CheckinScale key={m} metric={m} value={c.review[m]} onPick={(r) => void pick(m, r)} disabled={!editable} compact />
+      ))}
+      {!editable && <p className="text-xs text-muted">Ratings can be changed for the last 30 days.</p>}
+      {error && <p role="alert" className="text-xs text-no">{error}</p>}
+      {editable && <Link href={`/checkin?date=${date}`} className="inline-block text-xs font-semibold text-lime underline">Notes and journal for this day</Link>}
+    </div>
   );
 }

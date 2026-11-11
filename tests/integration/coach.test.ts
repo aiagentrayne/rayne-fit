@@ -34,7 +34,7 @@ describeDb("check-ins and journal", () => {
     expect(d.review.complete).toBe(true);
   });
 
-  it("accepts late entries up to 7 days back with their real time, and never future ones", async () => {
+  it("accepts late entries and edits up to 30 days back with their real time, and never future ones", async () => {
     const u = await makeUser("2026-10-10");
     const at = ny("2026-10-21", "09:15");
     await saveCheckin(sql, u, { date: "2026-10-19", metric: "mood", rating: 3 }, at);
@@ -42,7 +42,11 @@ describeDb("check-ins and journal", () => {
     expect(row.late).toBe(true);
     expect((row.recorded_at as Date).toISOString()).toBe(at.toISOString());
     await expect(saveCheckin(sql, u, { date: "2026-10-22", metric: "mood", rating: 3 }, at)).rejects.toThrow(/future/);
-    await expect(saveCheckin(sql, u, { date: "2026-10-13", metric: "mood", rating: 3 }, at)).rejects.toThrow(/7 days/);
+    await saveCheckin(sql, u, { date: "2026-10-19", metric: "mood", rating: 5 }, ny("2026-10-21", "09:20"));
+    const [edited] = await sql`select rating from checkins where user_id = ${u} and local_date = '2026-10-19' and metric = 'mood'`;
+    expect(edited.rating).toBe(5);
+    await saveCheckin(sql, u, { date: "2026-09-21", metric: "mood", rating: 3 }, at);
+    await expect(saveCheckin(sql, u, { date: "2026-09-20", metric: "mood", rating: 3 }, at)).rejects.toThrow(/30 days/);
   });
 
   it("flags crisis language in notes and journal without storing anything extra", async () => {

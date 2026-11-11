@@ -8,6 +8,7 @@ import type { DashboardCoach, PeriodMeasurable, ReviewStatus } from "@/client/ty
 import { CheckinScale } from "./CheckinScale";
 import { CrisisCard } from "./CrisisCard";
 import type { Metric } from "@/lib/core/coach";
+import { addDays } from "@/lib/core/time";
 
 const INTERVIEW_NAME: Record<string, string> = { weekly: "Weekly interview", monthly: "Monthly interview", quarterly: "Quarterly review" };
 
@@ -51,9 +52,10 @@ export function DailyReviewCard({ date, review, open, onChange }: { date: string
       </div>
       {error && <p role="alert" className="mt-2 text-sm text-no">{error}</p>}
       {crisis && <div className="mt-3"><CrisisCard /></div>}
-      <Link href={`/checkin?date=${date}`} className="mt-3 inline-block text-sm font-semibold text-lime underline">
-        Add notes or a journal entry
-      </Link>
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-sm font-semibold">
+        <Link href={`/checkin?date=${date}`} className="text-lime underline">Add notes or a journal entry</Link>
+        <Link href={`/checkin?date=${addDays(date, -1)}`} className="text-muted underline">Edit yesterday&apos;s ratings</Link>
+      </div>
     </section>
   );
 }

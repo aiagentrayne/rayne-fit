@@ -8,8 +8,8 @@ import { currentDay } from "@/lib/core/days";
 import { addDays, isLocalDate, monthRange, weekRange, type LocalDate } from "@/lib/core/time";
 import { detectCrisis, reviewStatus, type Metric, type ReviewStatus } from "@/lib/core/coach";
 
-/** Late entries are accepted for up to a week back; each keeps its real entry time. */
-export const LATE_ENTRY_DAYS = 7;
+/** Late entries and edits are accepted for up to 30 days back; each keeps its real entry time. */
+export const LATE_ENTRY_DAYS = 30;
 
 export const checkinSchema = z.object({
   date: z.string().refine(isLocalDate, "Invalid date."),
