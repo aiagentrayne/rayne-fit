@@ -32,7 +32,7 @@ export default function ProgressPage() {
     <div className="space-y-6 pt-2">
       <header className="flex items-center justify-between">
         <h1 className="font-display text-3xl">Progress</h1>
-        <Link href="/history" className="text-sm font-semibold text-lime underline">History &amp; grades</Link>
+        <Link href="/history" className="text-sm font-semibold text-lime underline">Calendar &amp; grades</Link>
       </header>
 
       <section className="space-y-2 rounded-2xl bg-panel p-4">
